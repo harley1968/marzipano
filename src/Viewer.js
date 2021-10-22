@@ -631,6 +631,12 @@ function defaultTransitionUpdate(val, newScene, oldScene) {
  *
  * @param {Scene} newScene The scene to switch to.
  * @param {Object} opts Transition options.
+ * @param {boolean} [opts.wait] Wait until all visible tiles are loaded before
+ *     switching to the new scene.
+ * @param {boolean} [opts.progress] Function to call as the new scene is
+ *     loading. A `progress` parameter is passed as a number in the range of
+ *     [0..1]. If the new scene is already loaded this function is still called
+ *     with a value of 1.
  * @param {number} [opts.transitionDuration=1000] Transition duration, in
  *     milliseconds.
  * @param {number} [opts.transitionUpdate=defaultTransitionUpdate]
@@ -654,6 +660,7 @@ Viewer.prototype.switchScene = function(newScene, opts, done) {
 
   // Do nothing if the target scene is the current one.
   if (oldScene === newScene) {
+    opts.progress && opts.progress(1);
     done();
     return;
   }
@@ -687,11 +694,6 @@ Viewer.prototype.switchScene = function(newScene, opts, done) {
   var update = opts.transitionUpdate != null ?
       opts.transitionUpdate : defaultTransitionUpdate;
 
-  // Add new scene layers into the stage before starting the transition.
-  for (var i = 0; i < newSceneLayers.length; i++) {
-    this._addLayerToStage(newSceneLayers[i]);
-  }
-
   // Update function to be called on every frame.
   function tweenUpdate(val) {
     update(val, newScene, oldScene);
@@ -715,22 +717,87 @@ Viewer.prototype.switchScene = function(newScene, opts, done) {
     done();
   }
 
-  // Store the cancelable for the transition.
-  this._cancelCurrentTween = tween(duration, tweenUpdate, tweenDone);
+  function tweenLayers() {
+    // Store the cancelable for the transition.
+    self._cancelCurrentTween = tween(duration, tweenUpdate, tweenDone);
 
-  // Update the current and replaced scene.
-  this._currentScene = newScene;
-  this._replacedScene = oldScene;
+    // Update the current and replaced scene.
+    self._currentScene = newScene;
+    self._replacedScene = oldScene;
 
-  // Emit scene and view change events.
-  this.emit('sceneChange');
-  this.emit('viewChange');
+    // Emit scene and view change events.
+    self.emit('sceneChange');
+    self.emit('viewChange');
 
-  // Add event listeners to the new scene.
-  // Note that event listeners can only be removed from the old scene once the
-  // transition is complete, since layers might get added or removed in the
-  // interim.
-  this._addSceneEventListeners(newScene);
+    // Add event listeners to the new scene.
+    // Note that event listeners can only be removed from the old scene once the
+    // transition is complete, since layers might get added or removed in the
+    // interim.
+    self._addSceneEventListeners(newScene);
+  }
+
+  // If waiting to transition, report the overall progress and also check the
+  // progress of each layer and start the transition when they have all finished.
+  var loadProgress = [];
+  function layerProgress(layerIndex, value) {
+    // Stop early if the value is the same as last time
+    if (loadProgress[layerIndex] === value) {
+      return;
+    }
+    loadProgress[layerIndex] = value;
+    // Calculate the progress of all layers
+    var total = 0;
+    for (var i = 0; i < loadProgress.length; i++) {
+      total += loadProgress[i];
+    }
+    // Report progress and start tweening when they're all finished
+    if (total === loadProgress.length) {
+      opts.progress && opts.progress(1);
+      opts.wait && tweenLayers();
+    } else {
+      opts.progress && opts.progress(total / loadProgress.length);
+    }
+  }
+
+  // Monitor the loading progress of a specific layer
+  function monitorLayerProgress(layerIndex) {
+    var sceneLayer = newSceneLayers[layerIndex];
+    var textureStore = sceneLayer.textureStore();
+    function onRenderComplete() {
+        var tileList = [];
+        sceneLayer.visibleTiles(tileList);
+        var count = 0;
+        for (var i = 0; i < tileList.length; i++) {
+          if (textureStore.query(tileList[ i ]).hasTexture) {
+            count++;
+          }
+        }
+        layerProgress(layerIndex, count / tileList.length);
+        if (count === tileList.length) {
+          sceneLayer.removeEventListener('renderComplete', onRenderComplete);
+        }
+    }
+    sceneLayer.addEventListener('renderComplete', onRenderComplete);
+  }
+
+  // Add new scene layers into the stage before starting the transition.
+  for (var i = 0; i < newSceneLayers.length; i++) {
+    this._addLayerToStage(newSceneLayers[i]);
+    if (opts.wait) {
+      // Initially hide while loading finishes
+      newSceneLayers[i].mergeEffects({ opacity: 0 });
+      loadProgress.push( 0 );
+    }
+  }
+
+  if (opts.wait || opts.progress) {
+    for (var i = 0; i < newSceneLayers.length; i++) {
+      monitorLayerProgress(i)
+    }
+  }
+  if (!opts.wait) {
+    tweenLayers();
+  }
 };
 
 
