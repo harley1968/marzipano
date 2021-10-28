@@ -136,6 +136,9 @@ function Viewer(domElement, opts) {
   // The current transition.
   this._cancelCurrentTween = null;
 
+  // The current scene load monitoring.
+  this._cancelCurrentMonitor = null;
+
   // The event listener fired when the current scene layers change.
   // This is attached to the correct scene whenever the current scene changes.
   this._layerChangeHandler = this._updateSceneLayers.bind(this);
@@ -204,6 +207,10 @@ Viewer.prototype.destroy = function() {
 
   if (this._cancelCurrentTween) {
     this._cancelCurrentTween();
+  }
+
+  if (this._cancelCurrentMonitor) {
+    this._cancelCurrentMonitor();
   }
 
   clearOwnProperties(this);
@@ -423,6 +430,10 @@ Viewer.prototype.destroyScene = function(scene) {
     if (this._cancelCurrentTween) {
       this._cancelCurrentTween();
       this._cancelCurrentTween = null;
+    }
+    if (this._cancelCurrentMonitor) {
+      this._cancelCurrentMonitor();
+      this._cancelCurrentMonitor = null;
     }
     this._currentScene = null;
     this.emit('sceneChange');
@@ -676,6 +687,13 @@ Viewer.prototype.switchScene = function(newScene, opts, done) {
     this._cancelCurrentTween = null;
   }
 
+  // Cancel an already ongoing monitor. This ensures that the stage doesn't get
+  // out of sync.
+  if (this._cancelCurrentMonitor) {
+    this._cancelCurrentMonitor();
+    this._cancelCurrentMonitor = null;
+  }
+
   var oldSceneLayers = oldScene ? oldScene.listLayers() : [];
   var newSceneLayers = newScene.listLayers();
   var stageLayers = stage.listLayers();
@@ -752,6 +770,7 @@ Viewer.prototype.switchScene = function(newScene, opts, done) {
     }
     // Report progress and start tweening when they're all finished
     if (total === loadProgress.length) {
+      self._cancelCurrentMonitor = null;
       opts.progress && opts.progress(1);
       opts.wait && tweenLayers();
     } else {
@@ -777,6 +796,14 @@ Viewer.prototype.switchScene = function(newScene, opts, done) {
           sceneLayer.removeEventListener('renderComplete', onRenderComplete);
         }
     }
+    self._cancelCurrentMonitor = function () {
+      sceneLayer.removeEventListener('renderComplete', onRenderComplete);
+      for (var i = 0; i < newSceneLayers.length; i++) {
+        this._removeLayerFromStage(newSceneLayers[i]);
+      }
+      opts.progress && opts.progress(1);
+      done();
+    };
     sceneLayer.addEventListener('renderComplete', onRenderComplete);
   }
 
