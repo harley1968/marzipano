@@ -485,7 +485,7 @@ declare module 'marzipano' {
     type: 'rectilinear'
 
     coordinatesToPerspectiveTransform(
-      coords: RectilinearViewCoords,
+      coords: RectilinearCoords,
       radius: number,
       extraTransforms: string
     ): string
@@ -522,9 +522,15 @@ declare module 'marzipano' {
 
     setLimiter(limiter: RectilinearViewLimiter): void
 
+    setPitch(pitch: number): void
+
     setYaw(yaw: number): void
 
+    setRoll(roll: number): void
+
     yaw(): number
+
+    roll(): number
 
     setParameters(params: RectilinearViewParams): void
 
